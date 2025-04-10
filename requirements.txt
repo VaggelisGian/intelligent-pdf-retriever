@@ -1,0 +1,6 @@
+FastAPI
+langchain
+neo4j
+redis
+streamlit
+openai
