@@ -1,34 +1,42 @@
-from langchain.chains import RetrievalQA
-from langchain.llms import OpenAI
-from langchain.vectorstores import Neo4jVectorStore
-from langchain.embeddings import OpenAIEmbeddings
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import List
+from langchain_openai import OpenAI
+from langchain.chains import GraphQAChain
+from langchain_community.graphs import Neo4jGraph
+from langchain.chains.graph_qa.base import GraphQAChain
+from dotenv import load_dotenv
+import os
 
-# Initialize the FastAPI router
-router = APIRouter()
+load_dotenv()
 
-# Define the request model for querying the assistant
-class QueryRequest(BaseModel):
-    query: str
-
-# Define the response model for the assistant's answer
-class QueryResponse(BaseModel):
-    answer: str
-
-# Initialize the LLM and the vector store
-embeddings = OpenAIEmbeddings()
-vector_store = Neo4jVectorStore(embeddings=embeddings, uri="neo4j://localhost:7687", username="neo4j", password="password")
-llm = OpenAI(model="gpt-4o-mini")
-
-# Create the Graph RAG assistant
-graph_rag_assistant = RetrievalQA(llm=llm, retriever=vector_store.as_retriever())
-
-@router.post("/graph_rag/query", response_model=QueryResponse)
-async def query_graph_rag(request: QueryRequest):
-    try:
-        answer = graph_rag_assistant.run(request.query)
-        return QueryResponse(answer=answer)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+class GraphRAGAssistant:
+    def __init__(self):
+        github_token = os.getenv('GITHUB_TOKEN')
+        neo4j_uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
+        neo4j_user = os.getenv('NEO4J_USERNAME', 'neo4j')
+        neo4j_password = os.getenv('NEO4J_PASSWORD', 'vaggpinel')
+        
+        # Initialize Neo4j graph
+        self.graph = Neo4jGraph(
+            url=neo4j_uri,
+            username=neo4j_user,
+            password=neo4j_password
+        )
+        
+        # Initialize LLM with GitHub Models API
+        self.llm = OpenAI(
+            openai_api_key=github_token,
+            openai_api_base="https://models.inference.ai.azure.com",
+            model_name="gpt-4o-mini",
+            temperature=0
+        )
+        
+        # Initialize graph QA chain
+        self.qa_chain = GraphQAChain.from_llm(
+            llm=self.llm,
+            graph=self.graph,
+            verbose=True
+        )
+    
+    def query(self, question):
+        """Query the Graph RAG assistant with a question"""
+        result = self.qa_chain.invoke({"query": question})
+        return result

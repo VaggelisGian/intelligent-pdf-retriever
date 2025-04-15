@@ -11,15 +11,19 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - PYTHONUNBUFFERED=1
       - REDIS_URL=redis://redis:6379/0
       - NEO4J_URI=bolt://neo4j:7687
       - NEO4J_USERNAME=neo4j
-      - NEO4J_PASSWORD=your_password_here
+      - NEO4J_PASSWORD=vaggpinel
 
   redis:
     image: redis:latest
     ports:
       - "6379:6379"
+    volumes:
+      - ./redis-data:/data # Add this line to persist data
+    command: redis-server --appendonly yes # Enable AOF persistence
 
   neo4j:
     image: neo4j:latest
@@ -27,7 +31,17 @@ services:
       - "7687:7687"
       - "7474:7474"
     environment:
-      - NEO4J_AUTH=neo4j/your_password_here
+      - NEO4J_AUTH=neo4j/vaggpinel
+      - NEO4J_apoc_export_file_enabled=true
+      - NEO4J_apoc_import_file_enabled=true
+      - NEO4J_apoc_import_file_use__neo4j__config=true
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - ./neo4j/logs:/logs
+      - ./neo4j/import:/import
+      - ./neo4j/plugins:/plugins
+    tmpfs:
+      - /data
 
   frontend:
     build:
@@ -36,5 +50,9 @@ services:
       - "8501:8501"
     volumes:
       - ./src/frontend:/app/src/frontend
+    environment:
+      - BACKEND_URL=http://backend:8000
     depends_on:
       - backend
+    command: >
+      bash -c "pip install websocket-client>=1.4.0 &&  streamlit run --server.runOnSave=true --server.fileWatcherType=poll src/frontend/app.py"

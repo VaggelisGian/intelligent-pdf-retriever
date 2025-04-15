@@ -1,4 +1,4 @@
-FROM python:3.9-slim
+﻿FROM python:3.9-slim
 
 # Set the working directory
 WORKDIR /app
@@ -7,7 +7,8 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir "uvicorn[standard]" websockets
 
 # Copy the application code
 COPY ./src ./src
@@ -16,4 +17,4 @@ COPY ./src ./src
 EXPOSE 8000
 
 # Command to run the application
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["python", "-m", "uvicorn", "src.backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
