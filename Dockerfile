@@ -6,9 +6,9 @@ WORKDIR /app
 # Copy the requirements file
 COPY requirements.txt .
 
-# Install the dependencies
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir "uvicorn[standard]" websockets
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir "uvicorn[standard]"
 
 # Copy the application code
 COPY ./src ./src

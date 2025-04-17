@@ -54,5 +54,3 @@ services:
       - BACKEND_URL=http://backend:8000
     depends_on:
       - backend
-    command: >
-      bash -c "pip install websocket-client>=1.4.0 &&  streamlit run --server.runOnSave=true --server.fileWatcherType=poll src/frontend/app.py"

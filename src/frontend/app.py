@@ -3,185 +3,60 @@ import requests
 import time
 import os
 import json
-import threading
-import websocket  # Make sure to install: pip install websocket-client
 from datetime import datetime
+import logging
+from typing import Optional
 
-# Define backend URL at the module level
+
+try:
+    for name, logger_instance in logging.root.manager.loggerDict.items():
+        if "streamlit" in name:
+            logger_instance.disabled = True
+    if "streamlit" in logging.root.manager.loggerDict:
+         logging.getLogger("streamlit").disabled = True
+except Exception as e:
+    print(f"Error disabling loggers: {e}")
+
+
 BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:8000")
 print(f"Using backend URL: {BACKEND_URL}")
 
-# Define global variables for thread-safe polling
-_last_poll_result = None
-_should_continue_polling = False
-
-# WebSocket client class to handle real-time progress updates
-class ProgressWebSocketClient:
-    def __init__(self, job_id):
-        self.job_id = job_id
-        self.ws = None
-        self.thread = None
-        self.running = False
-        
-        # Convert HTTP URL to WebSocket URL
-        ws_url = BACKEND_URL.replace("http://", "ws://").replace("https://", "wss://")
-        self.ws_url = f"{ws_url}/ws/progress/{job_id}"
-        
-        print(f"DEBUG: Initializing WebSocket client for {job_id}")
-        print(f"DEBUG: WebSocket URL: {self.ws_url}")
-    
-    def on_message(self, ws, message):
-        """Handle incoming progress updates from server"""
-        try:
-            # Parse the progress update
-            print(f"DEBUG: WebSocket received message: {message[:100]}...")
-            data = json.loads(message)
-            
-            # Update the session state with the new progress
-            st.session_state.progress_data = data
-            
-            # Print progress update for debugging
-            current_page = data.get("current_page", 0)
-            total_pages = data.get("total_pages", 0)
-            percent = data.get("percent_complete", 0)
-            status = data.get("status", "processing")
-            
-            print(f"WebSocket update: {percent}%, page {current_page}/{total_pages}, status: {status}")
-            
-            # Mark processing as complete if status is completed/failed/error
-            if status in ["completed", "failed", "error"]:
-                st.session_state.processing_active = False
-                
-            # Signal that UI needs to be updated
-            st.session_state.needs_rerun = True
-            
-        except Exception as e:
-            print(f"WebSocket message error: {e}")
-    
-    def on_error(self, ws, error):
-        """Handle WebSocket errors"""
-        print(f"DEBUG: WebSocket error: {error}")
-    
-    def on_close(self, ws, close_status_code, close_msg):
-        """Handle WebSocket connection close"""
-        print(f"DEBUG: WebSocket closed: {close_status_code} - {close_msg}")
-        self.running = False
-    
-    def on_open(self, ws):
-        """Handle WebSocket connection open"""
-        print(f"DEBUG: WebSocket connection established for job: {self.job_id}")
-        self.running = True
-        
-        # Send ping message every 30 seconds to keep connection alive
-        def ping_thread():
-            while self.running:
-                try:
-                    ws.send("ping")
-                    print(f"DEBUG: Sent ping to keep WebSocket alive")
-                    time.sleep(30)
-                except Exception as e:
-                    print(f"DEBUG: Error in ping thread: {e}")
-                    break
-        
-        threading.Thread(target=ping_thread).start()
-    
-    def start(self):
-        """Start WebSocket connection in background thread"""
-        # Create WebSocket connection
-        print(f"DEBUG: Creating WebSocketApp for {self.job_id}")
-        self.ws = websocket.WebSocketApp(
-            self.ws_url,
-            on_message=self.on_message,
-            on_error=self.on_error,
-            on_close=self.on_close,
-            on_open=self.on_open
-        )
-        
-        # Run WebSocket client in a thread
-        def run_ws():
-            print(f"DEBUG: Starting WebSocket run_forever() loop")
-            self.ws.run_forever()
-            print(f"DEBUG: WebSocket run_forever() loop ended")
-        
-        self.thread = threading.Thread(target=run_ws)
-        self.thread.daemon = True
-        self.thread.start()
-        print(f"DEBUG: WebSocket thread started")
-        
-        return self
-    
-    def stop(self):
-        """Stop WebSocket connection"""
-        print(f"DEBUG: Stopping WebSocket connection")
-        self.running = False
-        if self.ws:
-            self.ws.close()
-            print(f"DEBUG: WebSocket closed")
-
-
-# Replace your poll_progress function with this simpler version:
-
-# Replace the poll_progress function with this:
-
-def poll_progress(job_id):
-    """Direct polling function that updates session state"""
-    try:
-        progress_url = f"{BACKEND_URL}/api/progress/{job_id}"
-        print(f"DEBUG: Polling {progress_url}")
-        response = requests.get(progress_url, timeout=3)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Update progress data directly in session state
-            st.session_state.progress_data = data
-            st.session_state.last_poll_time = time.time()
-            
-            # Debug output
-            current_page = data.get("current_page", 0)
-            total_pages = data.get("total_pages", 0)
-            percent = data.get("percent_complete", 0)
-            status = data.get("status", "processing")
-            print(f"Poll update: {percent}%, page {current_page}/{total_pages}, status: {status}")
-            
-            # Stop polling on completion
-            if status in ["completed", "failed", "error"]:
-                print(f"DEBUG: Job {job_id} has status {status}, stopping polling")
-                st.session_state.should_continue_polling = False
-                return
-        else:
-            print(f"DEBUG: Poll failed with status {response.status_code}")
-            print(f"DEBUG: Response text: {response.text[:200]}")
-
-    except Exception as e:
-        print(f"DEBUG: Error in polling: {e}")
-    
-    # Continue polling if needed
-    if st.session_state.should_continue_polling:
-        threading.Timer(1.0, lambda: poll_progress(job_id)).start()
-    else:
-        print(f"DEBUG: Polling stopped for job {job_id}")
 
 def check_services_ready():
-    """Check if backend services are ready"""
     try:
-        response = requests.get(f"{BACKEND_URL}/api/health", timeout=5)
+        health_url = f"{BACKEND_URL}/api/health"
+        print(f"DEBUG: Checking backend health at {health_url}")
+        response = requests.get(health_url, timeout=5)
         if response.status_code == 200:
+            print("DEBUG: Backend health check successful (status 200).")
             return True
+        else:
+            print(f"DEBUG: Backend health check failed with status {response.status_code}.")
+            return False
+    except requests.exceptions.ConnectionError:
+        print("DEBUG: Backend health check failed (Connection Error).")
         return False
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: Backend health check failed with exception: {e}")
         return False
 
 def update_debug_mode():
     st.session_state.debug_mode = st.session_state.debug_checkbox_key
 
-def call_chat_api(question: str, use_graph: bool = False):
-    """Sends question to backend and returns the response."""
+def call_chat_api(question: str, use_graph: bool = False, temperature: Optional[float] = None, max_tokens: Optional[int] = None): # Add params
+    """Sends question to backend and returns the response, with optional LLM params."""
     try:
         chat_url = f"{BACKEND_URL}/api/chat"
         payload = {"question": question, "use_graph": use_graph}
-        response = requests.post(chat_url, json=payload, timeout=120) # Increased timeout for LLM calls
-        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        # Add parameters to payload only if they are not None
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        print(f"DEBUG: Calling chat API with payload: {payload}") # Log payload
+        response = requests.post(chat_url, json=payload, timeout=180) # Increased timeout
+        response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Chat API error: {e}")
@@ -189,114 +64,158 @@ def call_chat_api(question: str, use_graph: bool = False):
     except Exception as e:
         st.error(f"An unexpected error occurred: {e}")
         return None
-    
+
+
+def poll_progress(job_id):
+    try:
+        progress_url = f"{BACKEND_URL}/api/progress/{job_id}"
+        # print(f"DEBUG: Polling {progress_url}") # Reduce logging noise
+        response = requests.get(progress_url, timeout=10) # Slightly longer timeout for polling
+
+        if response.status_code == 200:
+            data = response.json()
+            st.session_state.progress_data = data
+            st.session_state.last_poll_time = time.time()
+
+            status = data.get("status", "processing")
+            # print(f"Poll update: {data.get('percent_complete', 0)}%, status: {status}") # Reduce logging noise
+
+            if status in ["completed", "failed", "error"]:
+                print(f"DEBUG: Job {job_id} status is {status}. Stopping processing.")
+                st.session_state.processing_active = False
+                return False # Stop polling loop
+            else:
+                return True # Continue polling loop
+        elif response.status_code == 404:
+             print(f"DEBUG: Poll failed with 404 for job {job_id}. Assuming job finished or invalid. Stopping polling.")
+             st.session_state.processing_active = False
+             # Update UI to show error state based on 404
+             st.session_state.progress_data = {
+                 **(st.session_state.progress_data or {}), # Keep existing data if any
+                 "job_id": job_id,
+                 "status": "error",
+                 "message": f"Polling failed: Job ID {job_id} not found (404)."
+             }
+             return False # Stop polling loop
+        else:
+            print(f"DEBUG: Poll failed with status {response.status_code} - {response.text[:200]}")
+            # Keep polling even on transient errors, but update last poll time
+            st.session_state.last_poll_time = time.time()
+            # Optionally update UI to show a temporary polling error
+            # st.session_state.progress_data["message"] = f"Polling error: {response.status_code}"
+            return True # Continue polling loop
+
+    except requests.exceptions.Timeout:
+         print(f"DEBUG: Timeout during polling job {job_id}.")
+         st.session_state.last_poll_time = time.time()
+         # Optionally update UI
+         # st.session_state.progress_data["message"] = "Polling timeout..."
+         return True # Continue polling loop
+    except requests.exceptions.RequestException as e:
+        print(f"DEBUG: Error during polling: {e}")
+        st.session_state.last_poll_time = time.time()
+        # Optionally update UI
+        # st.session_state.progress_data["message"] = f"Polling connection error..."
+        return True # Continue polling loop
+    except Exception as e:
+        print(f"DEBUG: Unexpected error during polling: {e}")
+        st.session_state.last_poll_time = time.time()
+        return True # Continue polling loop
+
+
 def main():
-    # This needs to be the very first thing in main()
-    global _should_continue_polling, _last_poll_result
-    _should_continue_polling = False
-    time.sleep(0.1)
-    # Add debug print to see what's happening with polling results
-    print(f"DEBUG: Main loop start. _last_poll_result exists: {_last_poll_result is not None}")
+
+    wait_placeholder = st.empty()
+    while not check_services_ready():
+        wait_placeholder.warning("⏳ Waiting for backend services (Neo4j, Redis, Backend) to start... This might take a minute.")
+        print("DEBUG: Backend not ready, sleeping for 5 seconds...")
+        time.sleep(5)
+
+
+    wait_placeholder.empty()
+    print("DEBUG: Backend services ready. Proceeding with app.")
+
     
-    if _last_poll_result and st.session_state.get("current_job_id") == _last_poll_result["job_id"]:
-        print(f"DEBUG: Processing poll result: {_last_poll_result['job_id']}")
-        print(f"DEBUG: Poll result data: {_last_poll_result['data'].get('percent_complete')}%, " +
-              f"page {_last_poll_result['data'].get('current_page')}/{_last_poll_result['data'].get('total_pages')}")
-        
-        # Update session state with the polling result
-        st.session_state.progress_data = _last_poll_result["data"]
-        
-        # Update processing status if needed
-        if _last_poll_result["data"].get("status") in ["completed", "failed", "error"]:
-            print(f"DEBUG: Job complete/failed. Stopping processing and polling.")
-            st.session_state.processing_active = False
-            _should_continue_polling = False  # Stop polling
-        
-        # Clear the result so we don't process it again
-        _last_poll_result = None
-        
-        # Trigger UI refresh
-        print("DEBUG: Triggering UI rerun from poll result")
-        st.rerun()
-    
-    # FIRST: Session State Initialization 
+
     for key, default in [
         ("processing_active", False),
         ("current_job_id", None),
         ("uploaded_file_info", None),
         ("debug_mode", False),
-        ("progress_data", None),    
+        ("progress_data", None),
         ("chat_history", []),
         ("user_question", ""),
-        ("needs_rerun", False),
-        ("ws_client", None),
-        ("last_current_page", 0),
-        ("last_update_time", time.time()),
+        ("last_poll_time", 0),
     ]:
         if key not in st.session_state:
             st.session_state[key] = default
 
-    # Now it is safe to use st.session_state.current_job_id, etc.
-    job_id = st.session_state.current_job_id
-    if (
-        st.session_state.processing_active
-        and job_id
-        and (
-            not st.session_state.progress_data
-            or st.session_state.progress_data.get("status") not in ["completed", "failed", "error"]
-        )
-    ):
-        progress_url = f"{BACKEND_URL}/api/progress/{job_id}"
-        try:
-            response = requests.get(progress_url, timeout=3)
-            if response.status_code == 200:
-                data = response.json()
-                st.session_state.progress_data = data
-                st.session_state.last_poll_time = time.time()
-                # If not complete, rerun after a short delay
-                if data.get("status") not in ["completed", "failed", "error"]:
-                    time.sleep(1)
-                    st.rerun()
-            else:
-                print(f"Poll failed: {response.status_code} {response.text[:200]}")
-        except Exception as e:
-            print(f"Polling error: {e}")
-                    
-    # UI code
-    st.title("Intelligent PDF Retriever!")
 
-    # Main UI with sidebar
+
+    needs_rerun_for_poll = False
+    if st.session_state.processing_active and st.session_state.current_job_id:
+        current_time = time.time()
+        # Poll every 2 seconds
+        if current_time - st.session_state.last_poll_time >= 2.0:
+            print(f"DEBUG: Time to poll job {st.session_state.current_job_id}")
+            if poll_progress(st.session_state.current_job_id):
+                 # If poll_progress returns True, it means we should continue polling
+                 needs_rerun_for_poll = True
+            else:
+                 # If poll_progress returns False, job is done/failed/error, stop polling loop
+                 needs_rerun_for_poll = False
+                 print("DEBUG: Polling indicated job finished or error. Rerunning once for final UI update.")
+                 st.rerun() # Rerun one last time to show final state
+        else:
+             # If it's not time to poll yet, still schedule a rerun to check again later
+             needs_rerun_for_poll = True
+
+
+
+    st.title("Intelligent PDF Retriever!")
     st.sidebar.info(f"Connected to: {BACKEND_URL}")
     if st.sidebar.button("Refresh Connection"):
-        if check_services_ready():
+
+        if st.session_state.current_job_id and st.session_state.processing_active:
+             print("DEBUG: Manual refresh button clicked while processing.")
+             poll_progress(st.session_state.current_job_id)
+             st.rerun()
+        elif check_services_ready():
             st.sidebar.success("✅ Connection OK")
+            st.rerun()
         else:
             st.sidebar.error("❌ Connection failed")
+            st.rerun()
 
-    st.header("Upload Document!!")
-    
-    # File Uploader
+
+    st.header("1. Upload Document")
     uploaded_file = st.file_uploader(
-        "Upload a PDF file",
-        type=["pdf"],
-        key="pdf_uploader",
+        "Upload a PDF or TXT file",
+        type=["pdf", "txt"],
+        key="doc_uploader",
         disabled=st.session_state.processing_active
     )
-    
+
     if uploaded_file is not None and not st.session_state.processing_active:
+
         if st.session_state.uploaded_file_info is None or st.session_state.uploaded_file_info["name"] != uploaded_file.name:
+            print(f"DEBUG: New file selected: {uploaded_file.name}")
             st.session_state.uploaded_file_info = {
                 "name": uploaded_file.name,
                 "bytes": uploaded_file.getvalue()
             }
+
             st.session_state.current_job_id = None
             st.session_state.progress_data = None
             st.session_state.processing_active = False
+            st.session_state.chat_history = []
+            st.session_state.last_poll_time = 0
+            st.rerun()
 
-    # Display File Info and Controls
+
+
     if st.session_state.uploaded_file_info:
         st.write("File selected:", st.session_state.uploaded_file_info["name"])
-        
         st.checkbox(
             "Debug mode",
             value=st.session_state.debug_mode,
@@ -304,208 +223,191 @@ def main():
             on_change=update_debug_mode,
             disabled=st.session_state.processing_active
         )
-        
-        # Process Button
+
         process_button_disabled = st.session_state.processing_active or st.session_state.uploaded_file_info is None
         if st.button("Process PDF", disabled=process_button_disabled):
+            print("DEBUG: Process PDF button clicked.")
             st.session_state.processing_active = True
             st.session_state.current_job_id = None
             st.session_state.progress_data = None
+            st.session_state.chat_history = []
+            st.session_state.last_poll_time = 0
             st.rerun()
 
-    # Upload Logic
+
     if st.session_state.processing_active and st.session_state.current_job_id is None and st.session_state.uploaded_file_info:
+        print("DEBUG: Entering upload logic block.")
         files = {"file": (st.session_state.uploaded_file_info["name"], st.session_state.uploaded_file_info["bytes"], "application/pdf")}
-        
         upload_container = st.empty()
-        
         with upload_container, st.status("Uploading file...", expanded=True) as status:
             try:
                 upload_url = f"{BACKEND_URL}/api/upload"
+                print(f"DEBUG: Posting file to {upload_url}")
                 response = requests.post(upload_url, files=files, timeout=60)
-                
-                # In the upload section (line ~310):
+
                 if response.status_code == 200:
                     resp_json = response.json()
                     job_id = resp_json.get("job_id")
+                    print(f"DEBUG: Upload successful, job ID: {job_id}")
                     st.session_state.current_job_id = job_id
+
                     st.session_state.progress_data = {
-                        "job_id": job_id,
-                        "status": "starting",
+                        "job_id": job_id, "status": "starting",
                         "message": "Upload successful. Starting processing...",
                         "percent_complete": 0
                     }
-                    # Close existing WebSocket client if any
-                    if st.session_state.ws_client:
-                        st.session_state.ws_client.stop()
-                    print(f"DEBUG: Starting polling for job {job_id}")
+                    st.session_state.last_poll_time = time.time()
+                    st.session_state.processing_active = True
                     status.update(label="✅ Upload successful", state="complete", expanded=False)
-                    # DO NOT call st.rerun() or start any thread here!
+                    print("DEBUG: Triggering rerun to start polling.")
+                    st.rerun()
+
                 else:
-                    fail_msg = f"Upload failed: {response.status_code} - {response.text}"
+                    fail_msg = f"Upload failed: {response.status_code} - {response.text[:500]}"
+                    print(f"DEBUG: {fail_msg}")
                     status.update(label=f"❌ {fail_msg}", state="error")
                     st.session_state.processing_active = False
                     st.session_state.current_job_id = None
-                    
-            except Exception as e:
-                fail_msg = f"Error during upload: {str(e)}"
+                    st.rerun()
+
+            except requests.exceptions.Timeout:
+                fail_msg = "Error during upload: Request timed out."
+                print(f"DEBUG: {fail_msg}")
                 status.update(label=f"❌ {fail_msg}", state="error")
                 st.session_state.processing_active = False
                 st.session_state.current_job_id = None
+                st.rerun()
+            except Exception as e:
+                fail_msg = f"Error during upload: {str(e)}"
+                print(f"DEBUG: {fail_msg}")
+                status.update(label=f"❌ {fail_msg}", state="error")
+                st.session_state.processing_active = False
+                st.session_state.current_job_id = None
+                st.rerun()
 
-    # Display progress
+
     if st.session_state.current_job_id and st.session_state.progress_data:
         data = st.session_state.progress_data
-        job_id = st.session_state.current_job_id
-
-        # Get values from the latest progress_data in session state
         percent = data.get("percent_complete", 0)
         message = data.get("message", "Processing...")
         status_value = data.get("status", "processing")
-        
-        # Get page information 
-        current_page = data.get("current_page", 0)
-        total_pages = data.get("total_pages", 0)
-        
-        # Improved progress calculation for PDF extraction phase
-        if status_value == "processing" and total_pages > 0 and current_page > 0:
-            # Scale extraction phase to 0-55% as per backend logic
-            calculated_pct = int((current_page / total_pages) * 55)
-            # Ensure minimum progress visibility once started
-            calculated_pct = max(1, calculated_pct)
-            # Use the maximum of backend-reported or calculated percentage
-            percent = max(percent, calculated_pct)
-        
-        # For neo4j processing phase, rely on backend percentage but ensure it's at least 55%
-        elif status_value == "processing_neo4j":
-            percent = max(percent, 55)  # Neo4j phase starts after 55% completion
-        
-        # Debug output for progress tracking
-        print(f"PROGRESS DISPLAY: {percent}%, page {current_page}/{total_pages}, status: {status_value}")
 
-        # Set appropriate label and state based on status
-        if status_value == "completed":
-            label = "✅ Complete"
-            state = "complete"
-        elif status_value in ["failed", "error"]:
-            label = f"❌ {message}"
-            state = "error"
-        else:
-            phase_info = ""
-            if status_value == "processing": 
-                phase_info = "Phase 1/2: PDF Extraction"
-            elif status_value == "processing_neo4j": 
-                phase_info = "Phase 2/2: Knowledge Graph Creation"
-            display_message = f"{phase_info} - {message}" if phase_info else message
-            label = f"⏳ {display_message}"
-            state = "running"
+        print(f"DEBUG RENDERING: Job={st.session_state.current_job_id}, Percent={percent}, Status={status_value}, Message={message}")
 
-        # Show the status widget
-        status_widget = st.status(
-            label, 
-            state=state, 
-            expanded=(status_value not in ["completed", "failed", "error"])
-        )
+        progress_container = st.container()
+        with progress_container:
+            if status_value not in ["completed", "failed", "error"]:
+                st.info(f"Status: {status_value} - {message}")
 
-        with status_widget:
-            # Convert percent to float and ensure it's between 0-1
-            progress_value = float(percent) / 100.0
-            progress_value = max(0.0, min(1.0, progress_value))
-            
-            # Show the progress bar
-            st.progress(progress_value)
-            
-            # Show detailed progress information
-            if current_page > 0 and total_pages > 0:
-                page_progress = f"{current_page}/{total_pages} pages"
-                st.text(f"Progress: {percent}% ({page_progress})")
+                progress_value_int = max(0, min(100, int(percent)))
+                st.progress(progress_value_int / 100.0)
+                st.text(f"{progress_value_int}%")
+            elif status_value == "completed":
+                st.success("✅ Processing Complete!")
+                st.progress(1.0)
             else:
-                st.text(f"Progress: {percent}%")
-            
-            # Only show debug info when debug mode is enabled
-            if st.session_state.debug_mode:
-                st.divider()
-                st.text("Debug Information:")
-                st.json(data)
-                st.text(f"Raw percent value: {data.get('percent_complete')}")
-                st.text(f"Calculated percent: {percent}")
+                st.error(f"❌ Processing Failed/Error: {message}")
 
-    # Chat Interface (only shows after successful processing)
+                progress_value_int = max(0, min(100, int(percent)))
+                if progress_value_int >= 0:
+                    st.progress(progress_value_int / 100.0)
+                    st.text(f"{progress_value_int}%")
+
+
+            if st.session_state.debug_mode:
+                st.json(data)
+
+
+        # --- LLM Parameter Sidebar ---
+    st.sidebar.header("LLM Parameters")
+    # Use session state to store parameter values
+    if 'llm_temp' not in st.session_state:
+        st.session_state.llm_temp = 0.1 # Default temperature
+    if 'llm_max_tokens' not in st.session_state:
+        st.session_state.llm_max_tokens = 512 # Default max tokens
+
+    # Sliders/Inputs for parameters
+    st.session_state.llm_temp = st.sidebar.slider(
+        "Temperature", min_value=0.0, max_value=2.0, value=st.session_state.llm_temp, step=0.05,
+        help="Controls randomness. Lower values make the output more deterministic."
+    )
+    st.session_state.llm_max_tokens = st.sidebar.number_input(
+        "Max Tokens", min_value=50, max_value=4096, value=st.session_state.llm_max_tokens, step=64,
+        help="Maximum number of tokens the model should generate in its response."
+    )
+
     st.header("2. Chat with Document")
 
-    # Check if processing is complete before showing chat
     processing_complete = (st.session_state.progress_data and
                           st.session_state.progress_data.get("status") == "completed")
-    
+
     if not processing_complete:
         st.info("Please upload and process a document successfully before chatting.")
     else:
         # Display chat history
-        chat_container = st.container(height=400) # Use container for scrollable history
+        chat_container = st.container(height=400)
         with chat_container:
             for message in st.session_state.chat_history:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
+                    # Display sources if available
                     if message.get("sources"):
                         with st.expander("Sources"):
-                            for source in message["sources"]:
-                                st.code(source, language='text') # Display sources if available
+                             # Display each source chunk
+                             for i, source in enumerate(message["sources"]):
+                                 st.text_area(f"Source Chunk {i+1}", source, height=100, key=f"src_{message['timestamp']}_{i}")
 
-        # Chat input area
+
+        # Chat input
         user_question = st.chat_input("Ask a question about the document...", key="chat_input_box")
 
         if user_question:
-            st.session_state.user_question = user_question # Store user input
+            st.session_state.user_question = user_question # Store question temporarily
 
-            # Add user message to history immediately
-            st.session_state.chat_history.append({"role": "user", "content": st.session_state.user_question})
+            # Append user message immediately
+            user_msg_timestamp = time.time()
+            st.session_state.chat_history.append({
+                "role": "user",
+                "content": st.session_state.user_question,
+                "timestamp": user_msg_timestamp # Add timestamp for unique keys
+            })
 
-            # Display user message in chat container
-            with chat_container:
-                 with st.chat_message("user"):
-                     st.markdown(st.session_state.user_question)
-
-            # Call backend API and display response
+            # Call API with parameters from sidebar
             with st.spinner("Thinking..."):
-                # TODO: Add toggle for use_graph if needed
-                response_data = call_chat_api(st.session_state.user_question, use_graph=False)
+                response_data = call_chat_api(
+                    st.session_state.user_question,
+                    use_graph=False, # Add toggle later if needed
+                    temperature=st.session_state.llm_temp,
+                    max_tokens=st.session_state.llm_max_tokens
+                )
 
+            # Append assistant response
+            assistant_msg_timestamp = time.time()
             if response_data:
                 answer = response_data.get("answer", "Sorry, I couldn't find an answer.")
                 sources = response_data.get("sources", [])
-                # Add assistant message to history
-                st.session_state.chat_history.append({"role": "assistant", "content": answer, "sources": sources})
-                # Display assistant message in chat container
-                with chat_container:
-                    with st.chat_message("assistant"):
-                        st.markdown(answer)
-                        if sources:
-                             with st.expander("Sources"):
-                                 for source in sources:
-                                     st.code(source, language='text')
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": sources,
+                    "timestamp": assistant_msg_timestamp
+                })
             else:
-                 # Error message already shown by call_chat_api
-                 st.session_state.chat_history.append({"role": "assistant", "content": "Error communicating with the backend."})
-                 with chat_container:
-                     with st.chat_message("assistant"):
-                         st.error("Error communicating with the backend.")
+                 st.session_state.chat_history.append({
+                     "role": "assistant",
+                     "content": "Error communicating with the backend.",
+                     "timestamp": assistant_msg_timestamp
+                 })
 
-            # Clear the input box state variable after processing
-            st.session_state.user_question = ""
-            # Rerun to clear the actual input box widget and show the new message
-            st.rerun()
+            st.session_state.user_question = "" # Clear temporary storage
+            st.rerun() # Rerun to display new messages
+
+
+    if needs_rerun_for_poll:
+        time.sleep(0.5)
+        st.rerun()
+
 
 
 if __name__ == "__main__":
     main()
-
-# Register cleanup function
-import atexit
-
-def cleanup():
-    """Clean up resources when app exits"""
-    if 'ws_client' in st.session_state and st.session_state.ws_client:
-        print("Closing WebSocket connection during cleanup")
-        st.session_state.ws_client.stop()
-
-atexit.register(cleanup)

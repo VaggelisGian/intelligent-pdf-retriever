@@ -15,3 +15,5 @@ tqdm
 numpy
 websocket-client>=1.4.0
 websockets>=10.4
+chardet
+sentence-transformers

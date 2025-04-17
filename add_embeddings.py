@@ -5,11 +5,19 @@ import time
 from tqdm import tqdm
 import numpy as np
 import requests
+from src.backend.assistant.rag import RAGAssistant
+from src.backend.assistant.graph_rag import GraphRAGAssistant
 import json
 from datetime import datetime
+from typing import Optional
 
 # Load environment variables
 load_dotenv()
+
+app = FastAPI()
+
+rag_assistant_instance: Optional[RAGAssistant] = None
+graph_rag_assistant_instance: Optional[GraphRAGAssistant] = None
 
 def chunks(lst, n):
     """Split a list into chunks of size n"""
@@ -46,12 +54,18 @@ def create_token_aware_batches(sentences, max_tokens=7500):
     
     return batches
 
+
+@app.on_event("startup")
+async def startup_event():
+    global rag_assistant_instance, graph_rag_assistant_instance
+    print("Initializing Assistants on startup...")
+    # Initialize with default LLM settings here
+    rag_assistant_instance = RAGAssistant()
+    graph_rag_assistant_instance = GraphRAGAssistant()
+    print("Assistants initialized.")
+
+
 def main():
-    # Initialize with token
-    api_key = os.getenv('GITHUB_TOKEN')
-    if not api_key:
-        print("Error: GITHUB_TOKEN not found in .env file")
-        return
     
     # Initialize Neo4j client
     neo4j_client = Neo4jClient(

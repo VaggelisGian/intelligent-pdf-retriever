@@ -8,7 +8,7 @@ import redis
 import asyncio
 
 # Import the progress tracking module
-from src.backend.api.progress import create_job, update_job_progress, complete_job, complete_job_sync
+from src.backend.api.progress import create_job, update_job_progress, progress_complete_job, complete_job_sync # <-- Corrected this line
 
 class PDFLoader:
     def __init__(self, pdf_directory, max_pages=None):
